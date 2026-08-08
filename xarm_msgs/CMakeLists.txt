@@ -90,6 +90,8 @@ find_package(catkin REQUIRED COMPONENTS
    FtCaliLoad.srv
    FtIdenLoad.srv
    VacuumGripperCtrl.srv
+   SolveIK.srv
+   CheckJointPath.srv
  )
 
 ## Generate actions in the 'action' folder

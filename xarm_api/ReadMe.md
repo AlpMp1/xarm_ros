@@ -75,6 +75,32 @@
       # mvacc: acceleration (rad/s^2)
       rosservice call /xarm/go_home [] ${mvvelo} ${mvacc} 0 0
       ```
+  - ##### solve_ik
+    - SDK API:
+      - `get_inverse_kinematics`
+    - rosservice:
+      ```bash
+      # pose: [x(mm), y(mm), z(mm), roll(rad), pitch(rad), yaw(rad)]
+      rosservice call /xarm/solve_ik "pose: [300, 0, 300, 3.14159, 0, 0]"
+      ```
+    - Returns exactly the connected robot's DOF joint values in radians when `ret == 0`.
+  - ##### check_joint_path
+    - SDK API:
+      - `set_only_check_type`
+      - `set_servo_angle`
+      - `only_check_result`
+    - rosservice:
+      ```bash
+      # waypoints: row-major joint waypoints in radians
+      # mvvelo: joint speed (rad/s), mvacc: joint acceleration (rad/s^2)
+      rosservice call /xarm/check_joint_path "dof: 6
+      waypoints: [0, 0, 0, 0, 0, 0, 0.1, 0, 0, 0, 0, 0.1]
+      mvvelo: 0.7
+      mvacc: 3.5"
+      ```
+    - Requires controller firmware 1.11.100 or newer. The complete check is serialized
+      against normal arm-motion callbacks and always attempts to restore
+      `only_check_type` to `0` before returning.
   - ##### move_joint
     - SDK API:
       - `set_servo_angle`

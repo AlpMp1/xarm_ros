@@ -5,6 +5,9 @@
  * Author: Jason Peng <jason@ufactory.cc>
  ============================================================================*/
 #include "xarm_api/xarm_driver.h"
+#include "xarm_api/only_check_session.h"
+
+#include <cmath>
 #define CMD_HEARTBEAT_SEC 30 // 30s
 
 #define DEBUG_MODE 1
@@ -145,6 +148,8 @@ void XArmDriver::_init_service(void)
   set_load_server_ = nh_.advertiseService("set_load", &XArmDriver::SetLoadCB, this);
 
   go_home_server_ = nh_.advertiseService("go_home", &XArmDriver::GoHomeCB, this);
+  solve_ik_server_ = nh_.advertiseService("solve_ik", &XArmDriver::SolveIKCB, this);
+  check_joint_path_server_ = nh_.advertiseService("check_joint_path", &XArmDriver::CheckJointPathCB, this);
   move_joint_server_ = nh_.advertiseService("move_joint", &XArmDriver::MoveJointCB, this);
   move_jointb_server_ = nh_.advertiseService("move_jointb", &XArmDriver::MoveJointbCB, this);
   move_lineb_server_ = nh_.advertiseService("move_lineb", &XArmDriver::MoveLinebCB, this);
@@ -262,7 +267,10 @@ void XArmDriver::_init_subscriber(void)
 void XArmDriver::SleepTopicCB(const std_msgs::Float32ConstPtr& msg)
 {
   if(msg->data>0)
+  {
+    std::lock_guard<std::mutex> lock(planning_service_mutex_);
     arm->set_pause_time(msg->data);
+  }
 }
 
 void XArmDriver::VeloMoveJointTopicCB(const xarm_msgs::VeloMoveMsgConstPtr& msg)
@@ -285,6 +293,7 @@ void XArmDriver::VeloMoveJointTopicCB(const xarm_msgs::VeloMoveMsgConstPtr& msg)
     }
   }
 
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   arm->vc_set_joint_velocity(jnt_v, msg->is_sync, msg->duration);
 }
 
@@ -307,6 +316,7 @@ void XArmDriver::VeloMoveLineTopicCB(const xarm_msgs::VeloMoveMsgConstPtr& msg)
     }
   }
 
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   arm->vc_set_cartesian_velocity(line_v, msg->is_tool_coord, msg->duration);
 }
 
@@ -1155,8 +1165,144 @@ bool XArmDriver::ConfigModbusCB(xarm_msgs::ConfigToolModbus::Request &req, xarm_
 
 bool XArmDriver::GoHomeCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Response &res)
 {
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->move_gohome(req.mvvelo, req.mvacc, req.mvtime, _get_wait_param());
   res.message = "go home, ret = " + std::to_string(res.ret);
+  return true;
+}
+
+bool XArmDriver::SolveIKCB(xarm_msgs::SolveIK::Request &req, xarm_msgs::SolveIK::Response &res)
+{
+  if(req.pose.size() != 6)
+  {
+    res.ret = PARAM_ERROR;
+    res.message = "pose must contain exactly 6 values";
+    return true;
+  }
+
+  float pose[6];
+  for(std::size_t index = 0; index < 6; ++index)
+  {
+    if(!std::isfinite(req.pose[index]))
+    {
+      res.ret = PARAM_ERROR;
+      res.message = "pose values must be finite";
+      return true;
+    }
+    pose[index] = req.pose[index];
+  }
+
+  float joints[7] = {0};
+  res.ret = arm->get_inverse_kinematics(pose, joints);
+  if(res.ret != 0)
+  {
+    res.message = "inverse kinematics failed, ret = " + std::to_string(res.ret);
+    return true;
+  }
+
+  for(int index = 0; index < dof_; ++index)
+  {
+    if(!std::isfinite(joints[index]))
+    {
+      res.ret = PARAM_ERROR;
+      res.joints.clear();
+      res.message = "inverse kinematics returned non-finite joints";
+      return true;
+    }
+    res.joints.push_back(joints[index]);
+  }
+  res.message = "inverse kinematics solved";
+  return true;
+}
+
+bool XArmDriver::CheckJointPathCB(xarm_msgs::CheckJointPath::Request &req, xarm_msgs::CheckJointPath::Response &res)
+{
+  res.failing_index = -1;
+  res.only_check_result = 0;
+  if(req.dof == 0 || req.dof > 7 || req.dof != dof_)
+  {
+    res.ret = PARAM_ERROR;
+    res.message = "dof must match the connected robot";
+    return true;
+  }
+  if(req.waypoints.empty() || req.waypoints.size() % req.dof != 0)
+  {
+    res.ret = PARAM_ERROR;
+    res.message = "waypoints must be a non-empty row-major multiple of dof";
+    return true;
+  }
+  if(!std::isfinite(req.mvvelo) || !std::isfinite(req.mvacc) ||
+     req.mvvelo < 0 || req.mvacc < 0)
+  {
+    res.ret = PARAM_ERROR;
+    res.message = "mvvelo and mvacc must be finite and non-negative";
+    return true;
+  }
+  for(float value : req.waypoints)
+  {
+    if(!std::isfinite(value))
+    {
+      res.ret = PARAM_ERROR;
+      res.message = "waypoint values must be finite";
+      return true;
+    }
+  }
+  if(!_firmware_version_is_ge(1, 11, 100))
+  {
+    res.ret = PARAM_ERROR;
+    res.message = "joint path checks require controller firmware 1.11.100 or newer";
+    return true;
+  }
+
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
+  int reset_ret = 0;
+  const std::size_t waypoint_count = req.waypoints.size() / req.dof;
+  const OnlyCheckPathResult result = RunOnlyCheckPath(
+      waypoint_count,
+      [this, &reset_ret](unsigned char type) {
+        const int ret = arm->set_only_check_type(type);
+        if(type == 0)
+        {
+          reset_ret = ret;
+        }
+        return ret;
+      },
+      [this, &req](std::size_t waypoint_index) {
+        float joints[7] = {0};
+        const std::size_t offset = waypoint_index * req.dof;
+        for(std::size_t joint_index = 0; joint_index < req.dof; ++joint_index)
+        {
+          joints[joint_index] = req.waypoints[offset + joint_index];
+        }
+        OnlyCheckStepResult step;
+        step.ret = arm->set_servo_angle(joints, req.mvvelo, req.mvacc, 0, false);
+        step.only_check_result = arm->only_check_result;
+        return step;
+      });
+
+  res.ret = result.ret;
+  res.failing_index = result.failing_index;
+  res.only_check_result = result.only_check_result;
+  if(result.ret != 0)
+  {
+    res.message = "joint path check failed at waypoint " +
+                  std::to_string(result.failing_index) +
+                  ", ret = " + std::to_string(result.ret);
+    if(reset_ret != 0)
+    {
+      res.message += "; reset only-check mode failed, ret = " + std::to_string(reset_ret);
+    }
+    return true;
+  }
+  if(reset_ret != 0)
+  {
+    res.ret = reset_ret;
+    res.message = "joint path passed but resetting only-check mode failed, ret = " +
+                  std::to_string(reset_ret);
+    return true;
+  }
+
+  res.message = "joint path is valid";
   return true;
 }
 
@@ -1181,6 +1327,7 @@ bool XArmDriver::MoveJointCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Res
         joint[index] = 0;
     }
   }
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->set_servo_angle(joint, req.mvvelo, req.mvacc, req.mvtime, _get_wait_param());
   res.message = "move joint, ret = " + std::to_string(res.ret);
   return true;
@@ -1203,6 +1350,7 @@ bool XArmDriver::MoveLineCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Resp
       pose[index] = req.pose[index];
     }
   }
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->set_position(pose, -1, req.mvvelo, req.mvacc, req.mvtime, _get_wait_param());
   res.message = "move line, ret = " + std::to_string(res.ret);
   return true;
@@ -1225,6 +1373,7 @@ bool XArmDriver::MoveLineToolCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::
       pose[index] = req.pose[index];
     }
   }
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->set_tool_position(pose, req.mvvelo, req.mvacc, req.mvtime, _get_wait_param());
   res.message = "move line tool, ret = " + std::to_string(res.ret);
   return true;
@@ -1248,6 +1397,7 @@ bool XArmDriver::MoveLinebCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Res
     }
   }
   float mvradii = req.mvradii >= 0 ? req.mvradii : 0;
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->set_position(pose, mvradii, req.mvvelo, req.mvacc, req.mvtime);        
   res.message = "move lineb, ret = " + std::to_string(res.ret);
   return true;
@@ -1274,6 +1424,7 @@ bool XArmDriver::MoveJointbCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Re
     }
   }
   float mvradii = req.mvradii >= 0 ? req.mvradii : 0;
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->set_servo_angle(joint, req.mvvelo, req.mvacc, req.mvtime, _get_wait_param(), 0, mvradii);
   res.message = "move jointB, ret = " + std::to_string(res.ret);
   return true;
@@ -1300,6 +1451,7 @@ bool XArmDriver::MoveServoJCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Re
     }
   }
 
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->set_servo_angle_j(pose, req.mvvelo, req.mvacc, req.mvtime);
   res.message = "move servoj, ret = " + std::to_string(res.ret);
   return true;
@@ -1323,6 +1475,7 @@ bool XArmDriver::MoveServoCartCB(xarm_msgs::Move::Request &req, xarm_msgs::Move:
     }
   }
   bool is_tool_coord = (req.mvtime != 0.0);
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->set_servo_cartesian(pose, req.mvvelo, req.mvacc, req.mvtime, is_tool_coord);
   res.message = "move servo_cartesian, ret = " + std::to_string(res.ret);
   return true;
@@ -1345,6 +1498,7 @@ bool XArmDriver::MoveLineAACB(xarm_msgs::MoveAxisAngle::Request &req, xarm_msgs:
       pose[index] = req.pose[index];
     }
   }
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->set_position_aa(pose, req.mvvelo, req.mvacc, req.mvtime, req.coord, req.relative, _get_wait_param());
   res.message = "move_line_aa, ret = " + std::to_string(res.ret);
   return true;
@@ -1367,6 +1521,7 @@ bool XArmDriver::MoveServoCartAACB(xarm_msgs::MoveAxisAngle::Request &req, xarm_
       pose[index] = req.pose[index];
     }
   }
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->set_servo_cartesian_aa(pose, req.mvvelo, req.mvacc, req.coord, req.relative);
   res.message = "move_servo_cart_aa, ret = " + std::to_string(res.ret);
   return true;
@@ -1394,6 +1549,7 @@ bool XArmDriver::VeloMoveJointCB(xarm_msgs::MoveVelo::Request &req, xarm_msgs::M
     }
   }
 
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->vc_set_joint_velocity(jnt_v, req.jnt_sync);
   res.message = "velocity move joint, ret = " + std::to_string(res.ret);
   return true;
@@ -1417,6 +1573,7 @@ bool XArmDriver::VeloMoveLineVCB(xarm_msgs::MoveVelo::Request &req, xarm_msgs::M
     }
   }
 
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->vc_set_cartesian_velocity(line_v, req.coord);
   res.message = "velocity move line, ret = " + std::to_string(res.ret);
   return true;
@@ -1444,6 +1601,7 @@ bool XArmDriver::VCSetJointVelocityCB(xarm_msgs::MoveVelocity::Request &req, xar
     }
   }
 
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->vc_set_joint_velocity(jnt_v, req.is_sync, req.duration);
   res.message = "velocity move joint, ret = " + std::to_string(res.ret);
   return true;
@@ -1467,6 +1625,7 @@ bool XArmDriver::VCSetCartesianVelocityCB(xarm_msgs::MoveVelocity::Request &req,
     }
   }
 
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->vc_set_cartesian_velocity(line_v, req.is_tool_coord, req.duration);
   res.message = "velocity move line, ret = " + std::to_string(res.ret);
   return true;
@@ -1604,6 +1763,7 @@ bool XArmDriver::LoadNPlayTrajCB(xarm_msgs::PlayTraj::Request &req, xarm_msgs::P
   char file_name[81]={0};
   req.traj_file.copy(file_name, req.traj_file.size(), 0);
 
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
   res.ret = arm->playback_trajectory(req.repeat_times, file_name, true, req.speed_factor);
 
   res.message = "PlayBack Trajectory, ret = " + std::to_string(res.ret);

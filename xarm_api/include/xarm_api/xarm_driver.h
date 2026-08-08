@@ -1,6 +1,7 @@
 #ifndef __XARM_DRIVER_H
 #define __XARM_DRIVER_H
 
+#include <mutex>
 #include <thread>
 #include <ros/ros.h>
 #include <control_msgs/GripperCommandAction.h>
@@ -33,6 +34,8 @@ public:
   bool MoveitClearErrCB(xarm_msgs::ClearErr::Request& req, xarm_msgs::ClearErr::Response& res);
   bool GetErrCB(xarm_msgs::GetErr::Request & req, xarm_msgs::GetErr::Response & res);
   bool GoHomeCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Response &res);
+  bool SolveIKCB(xarm_msgs::SolveIK::Request &req, xarm_msgs::SolveIK::Response &res);
+  bool CheckJointPathCB(xarm_msgs::CheckJointPath::Request &req, xarm_msgs::CheckJointPath::Response &res);
   bool MoveJointCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Response &res);
   bool MoveJointbCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Response &res);
   bool MoveLinebCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Response &res);
@@ -164,6 +167,8 @@ private:
 
   ros::NodeHandle nh_;
   ros::ServiceServer go_home_server_;
+  ros::ServiceServer solve_ik_server_;
+  ros::ServiceServer check_joint_path_server_;
   ros::ServiceServer move_joint_server_;
   ros::ServiceServer move_jointb_server_;
   ros::ServiceServer motion_ctrl_server_;
@@ -258,6 +263,8 @@ private:
   ros::Subscriber sleep_sub_;
   ros::Subscriber velo_move_joint_sub_;
   ros::Subscriber velo_move_line_sub_;
+
+  std::mutex planning_service_mutex_;
 
   std::shared_ptr<actionlib::ActionServer<control_msgs::GripperCommandAction>> xarm_gripper_action_server_;
   sensor_msgs::JointState xarm_gripper_joint_state_msg_;
