@@ -35,6 +35,7 @@ public:
   bool GetErrCB(xarm_msgs::GetErr::Request & req, xarm_msgs::GetErr::Response & res);
   bool GoHomeCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Response &res);
   bool SolveIKCB(xarm_msgs::SolveIK::Request &req, xarm_msgs::SolveIK::Response &res);
+  bool SolveFKCB(xarm_msgs::SolveFK::Request &req, xarm_msgs::SolveFK::Response &res);
   bool CheckJointPathCB(xarm_msgs::CheckJointPath::Request &req, xarm_msgs::CheckJointPath::Response &res);
   bool MoveJointCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Response &res);
   bool MoveJointbCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Response &res);
@@ -168,6 +169,7 @@ private:
   ros::NodeHandle nh_;
   ros::ServiceServer go_home_server_;
   ros::ServiceServer solve_ik_server_;
+  ros::ServiceServer solve_fk_server_;
   ros::ServiceServer check_joint_path_server_;
   ros::ServiceServer move_joint_server_;
   ros::ServiceServer move_jointb_server_;

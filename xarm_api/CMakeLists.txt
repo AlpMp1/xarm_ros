@@ -79,6 +79,13 @@ if(CATKIN_ENABLE_TESTING)
   if(TARGET test_only_check_session)
     target_link_libraries(test_only_check_session ${catkin_LIBRARIES})
   endif()
+
+  catkin_add_gtest(test_kinematics_request
+    test/test_kinematics_request.cpp
+  )
+  if(TARGET test_kinematics_request)
+    target_link_libraries(test_kinematics_request ${catkin_LIBRARIES})
+  endif()
 endif()
 
 # set the exec list who link the xarm_sdk library

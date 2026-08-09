@@ -38,6 +38,7 @@
 #include <xarm_msgs/FtIdenLoad.h>
 #include <xarm_msgs/VacuumGripperCtrl.h>
 #include <xarm_msgs/SolveIK.h>
+#include <xarm_msgs/SolveFK.h>
 #include <xarm_msgs/CheckJointPath.h>
 
 #endif // __XARM_MSGS_H

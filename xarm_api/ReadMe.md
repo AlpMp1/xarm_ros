@@ -84,6 +84,16 @@
       rosservice call /xarm/solve_ik "pose: [300, 0, 300, 3.14159, 0, 0]"
       ```
     - Returns exactly the connected robot's DOF joint values in radians when `ret == 0`.
+  - ##### solve_fk
+    - SDK API:
+      - `get_forward_kinematics`
+    - rosservice:
+      ```bash
+      # joints: exactly the connected robot's DOF joint values in radians
+      rosservice call /xarm/solve_fk "joints: [0, 0, 0, 0, 0, 0]"
+      ```
+    - Returns `[x(mm), y(mm), z(mm), roll(rad), pitch(rad), yaw(rad)]` when
+      `ret == 0`. This is a read-only kinematics query and does not command motion.
   - ##### check_joint_path
     - SDK API:
       - `set_only_check_type`

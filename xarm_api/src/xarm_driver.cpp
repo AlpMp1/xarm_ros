@@ -5,6 +5,7 @@
  * Author: Jason Peng <jason@ufactory.cc>
  ============================================================================*/
 #include "xarm_api/xarm_driver.h"
+#include "xarm_api/kinematics_request.h"
 #include "xarm_api/only_check_session.h"
 
 #include <cmath>
@@ -149,6 +150,7 @@ void XArmDriver::_init_service(void)
 
   go_home_server_ = nh_.advertiseService("go_home", &XArmDriver::GoHomeCB, this);
   solve_ik_server_ = nh_.advertiseService("solve_ik", &XArmDriver::SolveIKCB, this);
+  solve_fk_server_ = nh_.advertiseService("solve_fk", &XArmDriver::SolveFKCB, this);
   check_joint_path_server_ = nh_.advertiseService("check_joint_path", &XArmDriver::CheckJointPathCB, this);
   move_joint_server_ = nh_.advertiseService("move_joint", &XArmDriver::MoveJointCB, this);
   move_jointb_server_ = nh_.advertiseService("move_jointb", &XArmDriver::MoveJointbCB, this);
@@ -1173,27 +1175,25 @@ bool XArmDriver::GoHomeCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Respon
 
 bool XArmDriver::SolveIKCB(xarm_msgs::SolveIK::Request &req, xarm_msgs::SolveIK::Response &res)
 {
-  if(req.pose.size() != 6)
+  std::string validation_error;
+  if(!ValidateFiniteVector(req.pose, 6, "pose", &validation_error))
   {
     res.ret = PARAM_ERROR;
-    res.message = "pose must contain exactly 6 values";
+    res.message = validation_error;
     return true;
   }
 
   float pose[6];
   for(std::size_t index = 0; index < 6; ++index)
   {
-    if(!std::isfinite(req.pose[index]))
-    {
-      res.ret = PARAM_ERROR;
-      res.message = "pose values must be finite";
-      return true;
-    }
     pose[index] = req.pose[index];
   }
 
   float joints[7] = {0};
-  res.ret = arm->get_inverse_kinematics(pose, joints);
+  {
+    std::lock_guard<std::mutex> lock(planning_service_mutex_);
+    res.ret = arm->get_inverse_kinematics(pose, joints);
+  }
   if(res.ret != 0)
   {
     res.message = "inverse kinematics failed, ret = " + std::to_string(res.ret);
@@ -1212,6 +1212,49 @@ bool XArmDriver::SolveIKCB(xarm_msgs::SolveIK::Request &req, xarm_msgs::SolveIK:
     res.joints.push_back(joints[index]);
   }
   res.message = "inverse kinematics solved";
+  return true;
+}
+
+bool XArmDriver::SolveFKCB(xarm_msgs::SolveFK::Request &req, xarm_msgs::SolveFK::Response &res)
+{
+  std::string validation_error;
+  if(!ValidateFiniteVector(req.joints, static_cast<std::size_t>(dof_),
+                           "joints", &validation_error))
+  {
+    res.ret = PARAM_ERROR;
+    res.message = validation_error;
+    return true;
+  }
+
+  float joints[7] = {0};
+  for(int index = 0; index < dof_; ++index)
+  {
+    joints[index] = req.joints[index];
+  }
+
+  float pose[6] = {0};
+  {
+    std::lock_guard<std::mutex> lock(planning_service_mutex_);
+    res.ret = arm->get_forward_kinematics(joints, pose);
+  }
+  if(res.ret != 0)
+  {
+    res.message = "forward kinematics failed, ret = " + std::to_string(res.ret);
+    return true;
+  }
+
+  for(std::size_t index = 0; index < 6; ++index)
+  {
+    if(!std::isfinite(pose[index]))
+    {
+      res.ret = PARAM_ERROR;
+      res.pose.clear();
+      res.message = "forward kinematics returned a non-finite pose";
+      return true;
+    }
+    res.pose.push_back(pose[index]);
+  }
+  res.message = "forward kinematics solved";
   return true;
 }
 
