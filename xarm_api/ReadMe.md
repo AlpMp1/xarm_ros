@@ -111,6 +111,24 @@
     - Requires controller firmware 1.11.100 or newer. The complete check is serialized
       against normal arm-motion callbacks and always attempts to restore
       `only_check_type` to `0` before returning.
+  - ##### check_cartesian_path
+    - SDK API:
+      - `set_only_check_type`
+      - `set_position`
+      - `only_check_result`
+    - rosservice:
+      ```bash
+      # poses: row-major [x(mm), y(mm), z(mm), roll(rad), pitch(rad), yaw(rad)]
+      # mvvelo: TCP speed (mm/s), mvacc: TCP acceleration (mm/s^2)
+      rosservice call /xarm/check_cartesian_path "poses: [300, 0, 300, 3.14159, 0, 0, 320, 0, 300, 3.14159, 0, 0]
+      mvvelo: 380
+      mvacc: 1100
+      mvtime: 0
+      mvradii: 20"
+      ```
+    - Uses the same Cartesian command and motion parameters as `move_lineb`.
+      Requires controller firmware 1.11.100 or newer and always attempts to
+      restore `only_check_type` to `0` before returning.
   - ##### move_joint
     - SDK API:
       - `set_servo_angle`

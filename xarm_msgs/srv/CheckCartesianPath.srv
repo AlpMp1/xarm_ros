@@ -1,0 +1,10 @@
+float32[] poses
+float32 mvvelo
+float32 mvacc
+float32 mvtime
+float32 mvradii
+---
+int16 ret
+string message
+int32 failing_index
+uint8 only_check_result

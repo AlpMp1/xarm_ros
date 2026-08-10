@@ -7,6 +7,7 @@
 #include "xarm_api/xarm_driver.h"
 #include "xarm_api/kinematics_request.h"
 #include "xarm_api/only_check_session.h"
+#include "xarm_api/cartesian_path_request.h"
 
 #include <cmath>
 #define CMD_HEARTBEAT_SEC 30 // 30s
@@ -151,6 +152,8 @@ void XArmDriver::_init_service(void)
   go_home_server_ = nh_.advertiseService("go_home", &XArmDriver::GoHomeCB, this);
   solve_ik_server_ = nh_.advertiseService("solve_ik", &XArmDriver::SolveIKCB, this);
   solve_fk_server_ = nh_.advertiseService("solve_fk", &XArmDriver::SolveFKCB, this);
+  check_cartesian_path_server_ = nh_.advertiseService(
+      "check_cartesian_path", &XArmDriver::CheckCartesianPathCB, this);
   check_joint_path_server_ = nh_.advertiseService("check_joint_path", &XArmDriver::CheckJointPathCB, this);
   move_joint_server_ = nh_.advertiseService("move_joint", &XArmDriver::MoveJointCB, this);
   move_jointb_server_ = nh_.advertiseService("move_jointb", &XArmDriver::MoveJointbCB, this);
@@ -1255,6 +1258,78 @@ bool XArmDriver::SolveFKCB(xarm_msgs::SolveFK::Request &req, xarm_msgs::SolveFK:
     res.pose.push_back(pose[index]);
   }
   res.message = "forward kinematics solved";
+  return true;
+}
+
+bool XArmDriver::CheckCartesianPathCB(
+    xarm_msgs::CheckCartesianPath::Request &req,
+    xarm_msgs::CheckCartesianPath::Response &res)
+{
+  res.failing_index = -1;
+  res.only_check_result = 0;
+
+  std::vector<std::array<float, 6>> poses;
+  std::string parse_error;
+  if(!ParseCartesianPathRequest(req.poses, req.mvvelo, req.mvacc,
+                                req.mvtime, req.mvradii,
+                                &poses, &parse_error))
+  {
+    res.ret = PARAM_ERROR;
+    res.message = parse_error;
+    return true;
+  }
+  if(!_firmware_version_is_ge(1, 11, 100))
+  {
+    res.ret = PARAM_ERROR;
+    res.message = "cartesian path checks require controller firmware 1.11.100 or newer";
+    return true;
+  }
+
+  const float radius = req.mvradii >= 0 ? req.mvradii : 0;
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
+  int reset_ret = 0;
+  const OnlyCheckPathResult result = RunOnlyCheckPath(
+      poses.size(),
+      [this, &reset_ret](unsigned char type) {
+        const int ret = arm->set_only_check_type(type);
+        if(type == 0)
+        {
+          reset_ret = ret;
+        }
+        return ret;
+      },
+      [this, &poses, &req, radius](std::size_t waypoint_index) {
+        OnlyCheckStepResult step;
+        step.ret = arm->set_position(poses[waypoint_index].data(), radius,
+                                     req.mvvelo, req.mvacc, req.mvtime);
+        step.only_check_result = arm->only_check_result;
+        return step;
+      });
+
+  res.ret = result.ret;
+  res.failing_index = result.failing_index;
+  res.only_check_result = result.only_check_result;
+  if(result.ret != 0)
+  {
+    res.message = "cartesian path check failed at waypoint " +
+                  std::to_string(result.failing_index) +
+                  ", ret = " + std::to_string(result.ret);
+    if(reset_ret != 0)
+    {
+      res.message += "; reset only-check mode failed, ret = " +
+                     std::to_string(reset_ret);
+    }
+    return true;
+  }
+  if(reset_ret != 0)
+  {
+    res.ret = reset_ret;
+    res.message = "cartesian path passed but resetting only-check mode failed, ret = " +
+                  std::to_string(reset_ret);
+    return true;
+  }
+
+  res.message = "cartesian path is valid";
   return true;
 }
 

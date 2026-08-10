@@ -92,6 +92,7 @@ find_package(catkin REQUIRED COMPONENTS
    VacuumGripperCtrl.srv
    SolveIK.srv
    SolveFK.srv
+   CheckCartesianPath.srv
    CheckJointPath.srv
  )
 
