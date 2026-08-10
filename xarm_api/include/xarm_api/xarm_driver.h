@@ -37,6 +37,7 @@ public:
   bool SolveIKCB(xarm_msgs::SolveIK::Request &req, xarm_msgs::SolveIK::Response &res);
   bool SolveFKCB(xarm_msgs::SolveFK::Request &req, xarm_msgs::SolveFK::Response &res);
   bool CheckCartesianPathCB(xarm_msgs::CheckCartesianPath::Request &req, xarm_msgs::CheckCartesianPath::Response &res);
+  bool CheckMotionPathCB(xarm_msgs::CheckMotionPath::Request &req, xarm_msgs::CheckMotionPath::Response &res);
   bool CheckJointPathCB(xarm_msgs::CheckJointPath::Request &req, xarm_msgs::CheckJointPath::Response &res);
   bool MoveJointCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Response &res);
   bool MoveJointbCB(xarm_msgs::Move::Request &req, xarm_msgs::Move::Response &res);
@@ -172,6 +173,7 @@ private:
   ros::ServiceServer solve_ik_server_;
   ros::ServiceServer solve_fk_server_;
   ros::ServiceServer check_cartesian_path_server_;
+  ros::ServiceServer check_motion_path_server_;
   ros::ServiceServer check_joint_path_server_;
   ros::ServiceServer move_joint_server_;
   ros::ServiceServer move_jointb_server_;

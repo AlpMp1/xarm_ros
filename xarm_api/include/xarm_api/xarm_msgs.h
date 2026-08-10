@@ -40,6 +40,7 @@
 #include <xarm_msgs/SolveIK.h>
 #include <xarm_msgs/SolveFK.h>
 #include <xarm_msgs/CheckCartesianPath.h>
+#include <xarm_msgs/CheckMotionPath.h>
 #include <xarm_msgs/CheckJointPath.h>
 
 #endif // __XARM_MSGS_H

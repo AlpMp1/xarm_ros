@@ -53,6 +53,7 @@ find_package(catkin REQUIRED COMPONENTS
    IOState.msg
    CIOState.msg
    VeloMoveMsg.msg
+   MotionPathSegment.msg
  )
 
 ## Generate services in the 'srv' folder
@@ -93,6 +94,7 @@ find_package(catkin REQUIRED COMPONENTS
    SolveIK.srv
    SolveFK.srv
    CheckCartesianPath.srv
+   CheckMotionPath.srv
    CheckJointPath.srv
  )
 

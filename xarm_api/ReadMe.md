@@ -129,6 +129,20 @@
     - Uses the same Cartesian command and motion parameters as `move_lineb`.
       Requires controller firmware 1.11.100 or newer and always attempts to
       restore `only_check_type` to `0` before returning.
+  - ##### check_motion_path
+    - SDK APIs:
+      - `set_only_check_type`
+      - `set_position` for Cartesian segments
+      - `set_servo_angle` for joint segments
+      - `only_check_result`
+    - Accepts an ordered array of `MotionPathSegment` values. Each segment
+      carries its own primitive, six-dimensional target and the exact speed,
+      acceleration, time and radius used by the corresponding execution
+      command. The controller therefore keeps one intermediate state while
+      checking mixed Cartesian and joint motion in true execution order.
+    - Requires controller firmware 1.11.100 or newer. The request is serialized
+      against normal motion callbacks and always attempts to restore
+      `only_check_type` to `0` before returning.
   - ##### move_joint
     - SDK API:
       - `set_servo_angle`

@@ -1,0 +1,6 @@
+xarm_msgs/MotionPathSegment[] segments
+---
+int16 ret
+string message
+int32 failing_index
+uint8 only_check_result

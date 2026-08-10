@@ -73,6 +73,13 @@ target_link_libraries(xarm_driver_node
 )
 
 if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(test_motion_path_request
+    test/test_motion_path_request.cpp
+  )
+  if(TARGET test_motion_path_request)
+    target_link_libraries(test_motion_path_request ${catkin_LIBRARIES})
+  endif()
+
   catkin_add_gtest(test_cartesian_path_request
     test/test_cartesian_path_request.cpp
   )

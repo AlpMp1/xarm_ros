@@ -8,6 +8,7 @@
 #include "xarm_api/kinematics_request.h"
 #include "xarm_api/only_check_session.h"
 #include "xarm_api/cartesian_path_request.h"
+#include "xarm_api/motion_path_request.h"
 
 #include <cmath>
 #define CMD_HEARTBEAT_SEC 30 // 30s
@@ -154,6 +155,8 @@ void XArmDriver::_init_service(void)
   solve_fk_server_ = nh_.advertiseService("solve_fk", &XArmDriver::SolveFKCB, this);
   check_cartesian_path_server_ = nh_.advertiseService(
       "check_cartesian_path", &XArmDriver::CheckCartesianPathCB, this);
+  check_motion_path_server_ = nh_.advertiseService(
+      "check_motion_path", &XArmDriver::CheckMotionPathCB, this);
   check_joint_path_server_ = nh_.advertiseService("check_joint_path", &XArmDriver::CheckJointPathCB, this);
   move_joint_server_ = nh_.advertiseService("move_joint", &XArmDriver::MoveJointCB, this);
   move_jointb_server_ = nh_.advertiseService("move_jointb", &XArmDriver::MoveJointbCB, this);
@@ -1330,6 +1333,101 @@ bool XArmDriver::CheckCartesianPathCB(
   }
 
   res.message = "cartesian path is valid";
+  return true;
+}
+
+bool XArmDriver::CheckMotionPathCB(
+    xarm_msgs::CheckMotionPath::Request &req,
+    xarm_msgs::CheckMotionPath::Response &res)
+{
+  res.failing_index = -1;
+  res.only_check_result = 0;
+
+  std::vector<MotionPathRequestSegment> request_segments;
+  request_segments.reserve(req.segments.size());
+  for(const xarm_msgs::MotionPathSegment &source : req.segments)
+  {
+    MotionPathRequestSegment destination;
+    destination.motion_type = static_cast<MotionPrimitive>(source.motion_type);
+    destination.target = source.target;
+    destination.velocity = source.mvvelo;
+    destination.acceleration = source.mvacc;
+    destination.move_time = source.mvtime;
+    destination.radius = source.mvradii;
+    request_segments.push_back(destination);
+  }
+  std::vector<MotionPathSegment> segments;
+  std::string parse_error;
+  if(!ParseMotionPathRequest(request_segments, dof_, &segments, &parse_error))
+  {
+    res.ret = PARAM_ERROR;
+    res.message = parse_error;
+    return true;
+  }
+  if(!_firmware_version_is_ge(1, 11, 100))
+  {
+    res.ret = PARAM_ERROR;
+    res.message = "mixed motion path checks require controller firmware 1.11.100 or newer";
+    return true;
+  }
+
+  std::lock_guard<std::mutex> lock(planning_service_mutex_);
+  int reset_ret = 0;
+  const OnlyCheckPathResult result = RunOnlyCheckPath(
+      segments.size(),
+      [this, &reset_ret](unsigned char type) {
+        const int ret = arm->set_only_check_type(type);
+        if(type == 0)
+        {
+          reset_ret = ret;
+        }
+        return ret;
+      },
+      [this, &segments](std::size_t segment_index) {
+        const MotionPathSegment &segment = segments[segment_index];
+        float target[7] = {0};
+        std::copy(segment.target.begin(), segment.target.end(), target);
+        OnlyCheckStepResult step;
+        if(segment.motion_type == MotionPrimitive::kCartesian)
+        {
+          const float radius = segment.radius >= 0 ? segment.radius : 0;
+          step.ret = arm->set_position(target, radius, segment.velocity,
+                                       segment.acceleration,
+                                       segment.move_time);
+        }
+        else
+        {
+          step.ret = arm->set_servo_angle(target, segment.velocity,
+                                          segment.acceleration,
+                                          segment.move_time, false);
+        }
+        step.only_check_result = arm->only_check_result;
+        return step;
+      });
+
+  res.ret = result.ret;
+  res.failing_index = result.failing_index;
+  res.only_check_result = result.only_check_result;
+  if(result.ret != 0)
+  {
+    res.message = "mixed motion path check failed at segment " +
+                  std::to_string(result.failing_index) +
+                  ", ret = " + std::to_string(result.ret);
+    if(reset_ret != 0)
+    {
+      res.message += "; reset only-check mode failed, ret = " +
+                     std::to_string(reset_ret);
+    }
+    return true;
+  }
+  if(reset_ret != 0)
+  {
+    res.ret = reset_ret;
+    res.message = "mixed motion path passed but resetting only-check mode failed, ret = " +
+                  std::to_string(reset_ret);
+    return true;
+  }
+  res.message = "mixed motion path is valid";
   return true;
 }
 
